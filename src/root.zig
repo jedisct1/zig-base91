@@ -160,6 +160,11 @@ pub fn Base91(comptime alphabet: [91]u8) type {
 }
 
 test {
+    _ = standard;
+    _ = filesystem;
+}
+
+test {
     const codec = standard;
 
     var buf1: [256]u8 = undefined;
