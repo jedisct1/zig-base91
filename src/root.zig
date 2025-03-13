@@ -182,6 +182,6 @@ test {
 
         const buf_decoded_slice = buf2[0..codec.calcDecodedSizeUpperBound(encoded_slice.len)];
         const decoded_slice = try codec.decode(buf_decoded_slice, encoded_slice);
-        std.debug.assert(std.mem.eql(u8, input_slice, decoded_slice));
+        try std.testing.expectEqualSlices(u8, input_slice, decoded_slice);
     }
 }
