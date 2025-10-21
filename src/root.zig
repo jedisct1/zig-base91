@@ -75,8 +75,7 @@ pub fn Base91(comptime alphabet: [91]u8) type {
         /// The function returns the slice of the destination buffer that contains the encoded data.
         /// If the destination buffer is too small, the function returns `NoSpaceLeft`.
         pub fn encode(dst: []u8, src: []const u8) error{NoSpaceLeft}![]u8 {
-            var al = std.io.fixedBufferStream(dst);
-            var writer = al.writer();
+            var writer = std.Io.Writer.fixed(dst);
 
             var acc: u32 = 0;
             var num_bits: u5 = 0;
@@ -104,7 +103,7 @@ pub fn Base91(comptime alphabet: [91]u8) type {
                     writer.writeByte(alphabet[acc / 91]) catch return error.NoSpaceLeft;
                 }
             }
-            return al.buffer[0..al.pos];
+            return writer.buffered();
         }
 
         /// Decode a base91 encoded byte slice into a byte slice
@@ -115,8 +114,7 @@ pub fn Base91(comptime alphabet: [91]u8) type {
         /// If the encoded data contains invalid padding, the function returns `InvalidPadding`.
         /// If the destination buffer is too small, the function returns `NoSpaceLeft`.
         pub fn decode(dst: []u8, src: []const u8) Error![]u8 {
-            var al = std.io.fixedBufferStream(dst);
-            var writer = al.writer();
+            var writer = std.Io.Writer.fixed(dst);
 
             var acc: ?u32 = null;
             var b: u32 = 0;
@@ -146,7 +144,7 @@ pub fn Base91(comptime alphabet: [91]u8) type {
             } else if (b != 0) {
                 return error.InvalidPadding;
             }
-            return al.buffer[0..al.pos];
+            return writer.buffered();
         }
 
         fn inverseMap(forward_map: [91]u8) [256]u8 {
