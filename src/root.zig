@@ -169,10 +169,13 @@ test {
     var buf_encoded: [codec.calcSizeUpperBound(buf1.len)]u8 = undefined;
     var buf2: [codec.calcDecodedSizeUpperBound(buf_encoded.len)]u8 = undefined;
 
-    std.crypto.random.bytes(&buf1);
+    var prng = std.Random.DefaultPrng.init(std.testing.random_seed);
+    const random = prng.random();
+
+    random.bytes(&buf1);
 
     for (0..50000) |_| {
-        const random_length = std.crypto.random.int(u8);
+        const random_length = random.int(u8);
         const input_slice = buf1[0..random_length];
 
         const buf_encoded_slice = buf_encoded[0..codec.calcSizeUpperBound(random_length)];
