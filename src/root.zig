@@ -36,7 +36,7 @@ pub const Error = error{
 /// The alphabet must not contain any duplicate characters.
 /// The alphabet must not contain any characters that are NUL or not ASCII.
 pub fn Base91(comptime alphabet: [91]u8) type {
-    var observed = [_]bool{false} ** 256;
+    var observed = @as([256]bool, @splat(false));
     for (alphabet) |c| {
         if (observed[c]) @compileError("duplicate character in alphabet");
         observed[c] = true;
@@ -148,7 +148,7 @@ pub fn Base91(comptime alphabet: [91]u8) type {
         }
 
         fn inverseMap(forward_map: [91]u8) [256]u8 {
-            var inverse = [_]u8{none} ** 256;
+            var inverse = @as([256]u8, @splat(none));
             for (forward_map, 0..) |c, i| {
                 inverse[c] = i;
             }
