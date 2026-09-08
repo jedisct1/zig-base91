@@ -20,7 +20,7 @@ pub const filesystem = Base91(filesystem_alphabet_chars);
 pub const Error = error{
     /// The encoded data contains invalid characters
     InvalidCharacter,
-    /// The encoded data contains invalid padding
+    /// The encoded data does not end the way the encoder ends it
     InvalidPadding,
     /// The destination buffer is too small
     NoSpaceLeft,
@@ -100,37 +100,39 @@ pub fn Base91(comptime alphabet: [91]u8) type {
         ///
         /// The destination buffer needs up to `calcDecodedSizeUpperBound(src.len)` bytes.
         /// The function returns the decoded slice of the destination buffer, or `NoSpaceLeft` if the buffer is too small.
-        /// It returns `InvalidCharacter` for a character outside the alphabet, and `InvalidPadding` for trailing bits that do not form a byte.
+        /// The decoder is strict: it returns `InvalidPadding` for any ending that the encoder cannot produce.
+        /// It returns `InvalidCharacter` for a character outside the alphabet.
         pub fn decode(dst: []u8, src: []const u8) Error![]u8 {
             var writer = std.Io.Writer.fixed(dst);
 
-            var acc: ?u32 = null;
-            var b: u32 = 0;
+            var acc: u32 = 0;
             var num_bits: u5 = 0;
+            var pair: u32 = 0;
 
-            for (src) |x| {
-                const c: u16 = inverse_map[x];
-                if (c == none) return error.InvalidCharacter;
-                if (acc) |acc_| {
-                    const a = acc_ + c * 91;
-                    b |= a << num_bits;
-                    num_bits += pairBits(a);
-                    while (num_bits >= 8) {
-                        writer.writeByte(@truncate(b)) catch return error.NoSpaceLeft;
-                        b >>= 8;
-                        num_bits -= 8;
-                    }
-                    acc = null;
-                } else {
-                    acc = c;
+            var i: usize = 0;
+            while (i + 1 < src.len) : (i += 2) {
+                const low = try digit(src[i]);
+                const high = try digit(src[i + 1]);
+                pair = low + high * 91;
+                acc |= pair << num_bits;
+                num_bits += pairBits(pair);
+                while (num_bits >= 8) {
+                    writer.writeByte(@truncate(acc)) catch return error.NoSpaceLeft;
+                    acc >>= 8;
+                    num_bits -= 8;
                 }
             }
-            if (acc) |a| {
-                const last = b | a << num_bits;
-                if (last > 0xff) return error.InvalidPadding;
+            if (i < src.len) {
+                // A single trailing character only stands for a partial byte.
+                const d = try digit(src[i]);
+                const last = acc | d << num_bits;
+                if (num_bits == 0 or last > 0xff) return error.InvalidPadding;
                 writer.writeByte(@truncate(last)) catch return error.NoSpaceLeft;
-            } else if (b != 0) {
-                return error.InvalidPadding;
+            } else if (src.len > 0) {
+                if (acc != 0) return error.InvalidPadding;
+
+                // Reject a final pair that the encoder would have written as a single character.
+                if (fitsOneChar(pairBits(pair) - num_bits, pair)) return error.InvalidPadding;
             }
             return writer.buffered();
         }
@@ -143,6 +145,12 @@ pub fn Base91(comptime alphabet: [91]u8) type {
         /// Whether the encoder writes a single character for this tail
         fn fitsOneChar(tail_bits: u5, tail: u32) bool {
             return tail_bits <= 7 and tail < 91;
+        }
+
+        fn digit(c: u8) error{InvalidCharacter}!u32 {
+            const d = inverse_map[c];
+            if (d == none) return error.InvalidCharacter;
+            return d;
         }
 
         fn inverseMap(forward_map: [91]u8) [256]u8 {
@@ -213,6 +221,7 @@ test "vectors" {
     try testVector(standard, "\x00", "AA");
     try testVector(standard, "\xff", "/C");
     try testVector(standard, "\xff\xff\xff\xff", "B\"B\"#");
+    try testVector(standard, "\x00\x00\x00\xb0\x05\x00", "AAAAABA");
     try testVector(standard, "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f", ":C#(:C?hVB$MSiVEwndB");
     try testVector(
         standard,
@@ -226,12 +235,68 @@ test "errors" {
     try std.testing.expectError(error.InvalidCharacter, standard.decode(&buf, "8D-J"));
     try std.testing.expectError(error.InvalidCharacter, standard.decode(&buf, "8D J"));
     try std.testing.expectError(error.InvalidCharacter, standard.decode(&buf, "8D\x00J"));
+    try std.testing.expectError(error.InvalidPadding, standard.decode(&buf, "A"));
+    try std.testing.expectError(error.InvalidPadding, standard.decode(&buf, "M"));
     try std.testing.expectError(error.InvalidPadding, standard.decode(&buf, "AAI"));
     try std.testing.expectError(error.InvalidPadding, standard.decode(&buf, "A#"));
+    try std.testing.expectError(error.InvalidPadding, standard.decode(&buf, "AAAAABAA"));
     try std.testing.expectError(error.NoSpaceLeft, standard.decode(buf[0..3], "8D$JI"));
     try std.testing.expectError(error.NoSpaceLeft, standard.decode(buf[0..0], "AA"));
     try std.testing.expectError(error.NoSpaceLeft, standard.encode(buf[0..4], "Man "));
     try std.testing.expectError(error.NoSpaceLeft, standard.encode(buf[0..0], "M"));
+}
+
+fn testStrict(encoded: []const u8) !void {
+    var buf: [64]u8 = undefined;
+    var again: [64]u8 = undefined;
+    const decoded = standard.decode(&buf, encoded) catch |err| switch (err) {
+        error.InvalidPadding => return,
+        else => return err,
+    };
+    try std.testing.expectEqualStrings(encoded, try standard.encode(&again, decoded));
+}
+
+test "strict decoding of all data of up to three characters" {
+    try testStrict("");
+    for (default_alphabet_chars) |a| {
+        try testStrict(&.{a});
+        for (default_alphabet_chars) |b| {
+            try testStrict(&.{ a, b });
+            for (default_alphabet_chars) |c| {
+                try testStrict(&.{ a, b, c });
+            }
+        }
+    }
+}
+
+test "strict decoding of altered data" {
+    const Alteration = enum { change, add, drop };
+    var buf: [32]u8 = undefined;
+    var encoded_buf: [standard.calcSizeUpperBound(buf.len) + 1]u8 = undefined;
+
+    var prng = std.Random.DefaultPrng.init(std.testing.random_seed);
+    const random = prng.random();
+
+    for (0..50000) |_| {
+        const len = random.uintAtMost(usize, buf.len);
+        random.bytes(buf[0..len]);
+        var encoded = try standard.encode(&encoded_buf, buf[0..len]);
+
+        const c = default_alphabet_chars[random.uintLessThan(usize, default_alphabet_chars.len)];
+        switch (random.enumValue(Alteration)) {
+            .change => if (encoded.len > 0) {
+                encoded[random.uintLessThan(usize, encoded.len)] = c;
+            },
+            .add => {
+                encoded_buf[encoded.len] = c;
+                encoded = encoded_buf[0 .. encoded.len + 1];
+            },
+            .drop => if (encoded.len > 0) {
+                encoded = encoded[0 .. encoded.len - 1];
+            },
+        }
+        try testStrict(encoded);
+    }
 }
 
 test "size computations" {
