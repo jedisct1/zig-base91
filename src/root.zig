@@ -121,7 +121,8 @@ pub fn Base91(comptime alphabet: [91]u8) type {
             var num_bits: u5 = 0;
 
             for (src) |x| {
-                const c: u16 = @intCast(std.mem.indexOfScalar(u8, &alphabet, x) orelse return error.InvalidCharacter);
+                const c: u16 = inverse_map[x];
+                if (c == none) return error.InvalidCharacter;
                 if (acc) |acc_| {
                     const a = acc_ + c * 91;
                     b |= a << num_bits;
