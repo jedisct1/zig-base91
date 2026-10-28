@@ -138,7 +138,7 @@ pub fn Base91(comptime alphabet: [91]u8) type {
                 }
             }
             if (acc) |a| {
-                const last = b | a << num_bits;
+                const last = b | (a << num_bits);
                 if (last > 0xff) return error.InvalidPadding;
                 writer.writeByte(@truncate(last)) catch return error.NoSpaceLeft;
             } else if (b != 0) {
